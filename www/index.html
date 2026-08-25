@@ -2,14 +2,14 @@
 <html lang="nl">
 <head>
 <meta charset="utf-8">
-<script>
-window.onerror=function(m,s,l,c){
- document.documentElement.innerHTML='<body style="margin:0;padding:16px;background:#fff;color:#b00;font:13px monospace;white-space:pre-wrap">FOUT\n\n'+m+'\n\nregel '+l+' kolom '+c+'</body>';
- return true};
-</script>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#EDEBE6">
 <title>Planner</title>
+<script>
+window.onerror=function(m,s,l,c){
+ document.documentElement.innerHTML='<body style="margin:0;padding:16px;background:#fff;color:#b00;font:13px monospace;white-space:pre-wrap">FOUT\n\n'+m+'\n\n'+s+'\nregel '+l+' kolom '+c+'</body>';
+ return true};
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,"Segoe UI",Roboto,sans-serif;background:#EDEBE6;color:#16181D;font-size:16px;line-height:1.5;padding-bottom:80px}
@@ -42,7 +42,7 @@ input:focus{outline:none;border-color:#16181D}
 .pop{position:fixed;inset:0;background:rgba(20,22,26,.4);display:flex;align-items:flex-end;z-index:50}
 .sheet{background:#EDEBE6;width:100%;max-width:440px;margin:0 auto;border-radius:20px 20px 0 0;padding:20px 16px 28px;max-height:88vh;overflow:auto}
 .tabs{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #DAD8D2;display:flex;z-index:20;max-width:440px;margin:0 auto}
-.tab{flex:1;padding:12px 4px calc(12px + env(safe-area-inset-bottom));text-align:center;font-size:12px;font-weight:600;color:#9A9B9F}
+.tab{flex:1;padding:12px 4px;text-align:center;font-size:12px;font-weight:600;color:#9A9B9F}
 .tab.on{color:#16181D}
 .tab i{display:block;font-size:19px;font-style:normal;margin-bottom:3px}
 .hint{background:#16181D;color:#fff;padding:11px 14px;border-radius:11px;font-size:15px;margin-bottom:12px;font-weight:500}
@@ -57,253 +57,16 @@ input:focus{outline:none;border-color:#16181D}
 .seg{display:flex;background:#E1DFDA;border-radius:11px;padding:3px;margin-bottom:14px}
 .seg button{flex:1;padding:9px;border-radius:9px;font-size:14px;font-weight:500;color:#62646B;text-align:center}
 .seg button.on{background:#fff;color:#16181D}
-.fab{position:fixed;right:calc(50% - 220px + 16px);bottom:92px;width:56px;height:56px;border-radius:50%;background:#16181D;color:#fff;font-size:28px;line-height:54px;text-align:center;z-index:21}
-@media(max-width:452px){.fab{right:16px}}
+.fab{position:fixed;right:16px;bottom:92px;width:56px;height:56px;border-radius:50%;background:#16181D;color:#fff;font-size:28px;line-height:54px;text-align:center;z-index:21}
 @keyframes fill{0%{transform:scale(.55);opacity:.3}100%{transform:scale(1);opacity:1}}
 .anim{animation:fill .28s ease-out}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<script>
-const P=["#5B4BC4","#0F7A5E","#B36A08","#A8385C","#1F5FA8","#8A3E12"],PL=["#DDD9F7","#CFEBE0","#F8E4C2","#F6D8E2","#D9E6F7","#F4DFD0"];
-const DN=["M","D","W","D","V","Z","Z"],MN=["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
-const KEY="planner_v1";
-
-const native=()=>!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
-
-let mem=null;
-const store={
- save(d){
-  try{localStorage.setItem(KEY,JSON.stringify(d))}catch(e){mem=JSON.stringify(d)}},
- load(){
-  try{const v=localStorage.getItem(KEY);if(v)return JSON.parse(v)}catch(e){}
-  try{return mem?JSON.parse(mem):null}catch(e){return null}},
- wipe(){try{localStorage.removeItem(KEY)}catch(e){}mem=null}
-};
-
-const cal={
- available(){return native()},
- async permission(){return false},
- async list(){
-  return [{id:"demo-1",name:"Gedeeld gezin"},{id:"demo-2",name:"Persoonlijk"},{id:"demo-3",name:"Feestdagen"}]},
- async read(fromISO,toISO){return []},
- async write(calendarId,title,dateISO){
-  console.log("[cal] schrijven:",calendarId,title,dateISO);return{ok:false}},
- async remove(calendarId,title,dateISO){
-  console.log("[cal] wissen:",calendarId,title,dateISO);return{ok:false}},
- fmtTitle(subject,person){return subject+" - "+person},
- parseTitle(t){const i=t.lastIndexOf(" - ");return i<0?null:{subject:t.slice(0,i),person:t.slice(i+3)}}
-};
-
-const notify={
- async permission(){return false},
- async daily(hhmm,body){return false},
- async cancel(){return true}
-};
-
-const today=new Date();today.setHours(12,0,0,0);
-const iso=d=>{const x=new Date(d);return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0")};
-const TD=iso(today);
-const fmt=d=>{const x=new Date(d+"T12:00");return x.getDate()+" "+MN[x.getMonth()]};
-const plus=n=>iso(new Date(+today+n*864e5));
-
-const fresh=()=>({v:1,step:0,people:[],nudge:"08:00",subjects:[],asg:{},tasks:[],lists:[],dismissed:[]});
-let D=store.load()||fresh();
-const U={tab:"home",filt:null,sheet:null,md:"none",d1:"",d2:"",tt:"",cur:null,brush:null,pivot:"subject",painted:false,focus:0,mo:{y:today.getFullYear(),m:today.getMonth()},sel:null,pend:"",editl:null,pd:null,cals:[]};
-if(D.subjects.length&&U.cur===null)U.cur=D.subjects[0].id;
-
-const el=document.getElementById("app");
-const esc=s=>String(s).replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
-const save=()=>store.save(D);
-const sub=()=>D.subjects.find(x=>x.id===U.cur)||D.subjects[0];
-
-function r(){el.innerHTML=D.step<99?setup():main();bind()}
-
-function setup(){
- if(D.step===0)return `<div class="wrap"><div style="height:12vh"></div>
- <h1>Wie plant er mee?</h1><p class="sub">Iedereen aan wie je dagen kan toewijzen. Oma telt mee. Een tandarts niet.</p>
- ${D.people.length?`<div class="card">${D.people.map((p,i)=>`<div class="row"><span>${esc(p)}</span><button class="muted" data-a="rmp" data-v="${i}">verwijderen</button></div>`).join("")}</div>`:""}
- <input type="text" id="nm" placeholder="Naam" autocomplete="off">
- <button class="btn soft" data-a="addp">Toevoegen</button>
- <button class="btn" data-a="s1">Verder</button></div>`;
- if(D.step===1)return `<div class="wrap"><div style="height:14vh"></div>
- <h1>Wanneer mag de app iets laten weten?</h1><p class="sub">Een moment per dag.</p>
- <input type="time" id="tm" value="${D.nudge}"><button class="btn" data-a="s2">Verder</button></div>`;
- if(D.step===2)return `<div class="wrap"><div style="height:8vh"></div>
- <h1>Agenda</h1><p class="sub">De app zet hier zijn eigen afspraken in, zodat je partner ze ziet.</p>
- <div class="card">${(U.cals||[]).map(c=>`<button class="row" data-a="wc" data-v="${esc(c.id)}">
-  <span>${esc(c.name)}</span><span class="muted">${D.writeCal===c.id?"schrijven":"kies"}</span></button>`).join("")
-  ||`<div class="muted">Geen agendas gevonden.</div>`}</div>
- ${cal.available()?"":`<p class="muted">Browserversie - de agenda is gesimuleerd.</p>`}
- <button class="btn" data-a="s3">Verder</button></div>`;
- return `<div class="wrap"><div style="height:8vh"></div>
- <h1>Wat wil je inplannen?</h1><p class="sub">Iets dat terugkomt en iemand nodig heeft.</p>
- <input type="text" id="sj" placeholder="" autocomplete="off">
- <div style="margin-top:12px">${["Kinderen ophalen","Koken","Hond uitlaten"].map(x=>`<button class="chip" data-a="pre" data-v="${x}">${x}</button>`).join("")}</div>
- <button class="btn" data-a="mk">Verder</button>
- <button class="btn ghost" data-a="skip">Overslaan</button></div>`;
-}
-
-function main(){
- let b=`<div class="wrap">`;
- b+=U.tab==="home"?home():U.tab==="todo"?todo():U.tab==="plan"?plan():settings();
- b+=`</div>`;
- if(U.tab==="home"||U.tab==="todo")b+=`<button class="fab" data-a="new">+</button>`;
- b+=`<div class="tabs">
- <div class="tab ${U.tab==="home"?"on":""}" data-a="t" data-v="home"><i>&#9673;</i>Vandaag</div>
- <div class="tab ${U.tab==="todo"?"on":""}" data-a="t" data-v="todo"><i>&#9776;</i>Lijst</div>
- <div class="tab ${U.tab==="plan"?"on":""}" data-a="t" data-v="plan"><i>&#9638;</i>Plannen</div>
- <div class="tab ${U.tab==="set"?"on":""}" data-a="t" data-v="set"><i>&#9881;</i>Meer</div></div>`;
- if(U.sheet)b+=sheet();
- return b;
-}
-
-function home(){
- const open=D.tasks.filter(t=>!t.done);
- const dated=open.filter(t=>t.due&&t.due<=TD).sort((a,b)=>a.due<b.due?-1:1);
- const f=dated[0]||open.find(t=>!t.due)||null;
- const tom=open.filter(t=>t.due===plus(1)).length;
- let b=`<div style="padding:20px 0 6px"><div class="muted">Nu</div>`;
- b+=f?`<button class="focus" data-a="open" data-v="${f.id}">${esc(f.t)}</button>
-       <div class="muted">${f.due?(f.due<TD?"stond op "+fmt(f.due):"vandaag"):"geen datum"}</div>`
-     :`<div class="focus">Niets open</div><div class="muted">Rustige dag</div>`;
- b+=`</div>`;
- const as=[];
- for(const s of D.subjects){const p=(D.asg[s.id]||{})[TD];if(p!=null&&D.people[p])as.push(s.name+" - "+D.people[p])}
- const rest=dated.slice(1,4);
- if(as.length||rest.length){b+=`<div class="card">`;
-  as.forEach(a=>b+=`<div class="row"><span>${esc(a)}</span><span class="muted">vandaag</span></div>`);
-  rest.forEach(t=>b+=`<button class="row" data-a="open" data-v="${t.id}"><span>${esc(t.t)}</span><span class="muted">${t.due===TD?"vandaag":fmt(t.due)}</span></button>`);
-  b+=`</div>`}
- const pl=D.lists.filter(l=>l.d1&&l.d1>=TD&&l.d1<=plus(6)&&!D.dismissed.includes(l.name))
-   .find(l=>!D.tasks.some(t=>t.ev===l.name&&!t.done));
- if(pl)b+=`<div class="sugg">${esc(pl.name)} op ${fmt(pl.d1)} - nog geen taken.
-  <div style="margin-top:10px"><button class="chip" data-a="prep" data-v="${esc(pl.name)}">Toevoegen</button><button class="chip" data-a="dis" data-v="${esc(pl.name)}">Niet nodig</button></div></div>`;
- const gaps=nextGap();
- if(gaps)b+=`<button class="note" data-a="gogap" data-v="${gaps.id}">${esc(gaps.name)}: ${gaps.n} ${gaps.n===1?"dag":"dagen"} open deze maand</button>`;
- if(tom)b+=`<button class="row" data-a="t" data-v="todo"><span class="muted">${tom} morgen</span><span class="muted">&rsaquo;</span></button>`;
- if(!f&&!as.length&&!D.tasks.length)b+=`<div class="muted" style="padding:10px 0">Tik op + om je eerste taak toe te voegen.</div>`;
- return b;
-}
-
-function nextGap(){
- for(const s of D.subjects){
-  const n=countGaps(s,today.getFullYear(),today.getMonth());
-  if(n)return{id:s.id,name:s.name,n}}
- return null;
-}
-function countGaps(s,y,m){
- if(!s||s.scope==="none")return 0;
- const dim=new Date(y,m+1,0).getDate();let n=0;
- for(let d=1;d<=dim;d++){
-  const dt=iso(new Date(y,m,d,12));if(dt<TD)continue;
-  const wd=(new Date(y,m,d).getDay()+6)%7;
-  const need=s.scope==="week"?wd<5:true;
-  if(need&&(D.asg[s.id]||{})[dt]==null)n++}
- return n;
-}
-
-function todo(){
- const names=[...new Set([...D.lists.map(l=>l.name),...D.tasks.filter(t=>t.ev).map(t=>t.ev)])];
- let b=`<div style="padding:16px 0 4px"><h1 style="font-size:22px">Lijst</h1></div>
- <div style="margin-bottom:6px"><button class="chip ${!U.filt?"on":""}" style="${!U.filt?"background:#16181D;color:#fff":""}" data-a="f" data-v="">Alles</button>`;
- names.forEach(e=>b+=`<button class="chip ${U.filt===e?"on":""}" style="${U.filt===e?"background:#16181D;color:#fff":""}" data-a="f" data-v="${esc(e)}">${esc(e)}</button>`);
- b+=`<button class="chip" data-a="newl" style="border-style:dashed;color:#62646B">+ Lijst</button></div>`;
- const cl=D.lists.find(l=>l.name===U.filt);
- if(cl)b+= cl.d1
-  ?`<button class="note" data-a="editl" data-v="${esc(cl.name)}">${cl.d2?fmt(cl.d1)+" tot "+fmt(cl.d2):fmt(cl.d1)} - wijzigen</button>`
-  :`<button class="sugg" data-a="editl" data-v="${esc(cl.name)}">Nog geen dag gekozen - inplannen?</button>`;
- const l=D.tasks.filter(t=>!U.filt||t.ev===U.filt);
- const op=l.filter(t=>!t.done),dn=l.filter(t=>t.done);
- b+=`<div class="card">`;
- if(!l.length)b+=`<div class="muted" style="padding:6px 0">Nog niets hier. Tik op + om iets toe te voegen.</div>`;
- op.forEach(t=>b+=tk(t));
- dn.forEach(t=>b+=tk(t));
- b+=`</div>`;
- if(cl)b+=`<button class="btn ghost" data-a="dell" data-v="${esc(cl.name)}">Lijst verwijderen</button>`;
- return b;
-}
-const tk=t=>`<div class="tk"><button class="box ${t.done?"on":""}" data-a="tog" data-v="${t.id}" aria-label="klaar"></button>
- <button data-a="open" data-v="${t.id}" style="flex:1"><div class="${t.done?"done":""}">${esc(t.t)}</div>
- ${!t.done&&(t.due||t.ev&&!U.filt)?`<div class="muted" style="font-size:13px">${[t.due?(t.due===TD?"vandaag":fmt(t.due)):"",!U.filt&&t.ev?esc(t.ev):""].filter(Boolean).join(" - ")}</div>`:""}</button></div>`;
-
-function plan(){
- if(!D.subjects.length)return `<div style="padding:20px 0"><h1 style="font-size:22px">Plannen</h1>
- <p class="sub">Nog niets om te plannen. Maak iets dat terugkomt en iemand nodig heeft.</p>
- <button class="btn" data-a="picks">Iets toevoegen</button></div>`;
- const s=sub();
- let b=`<div style="padding:16px 0 10px">
- <div class="seg"><button data-a="pv" data-v="subject" class="${U.pivot==="subject"?"on":""}">Per taak</button>
- <button data-a="pv" data-v="person" class="${U.pivot==="person"?"on":""}">Per persoon</button></div></div>`;
- if(U.pivot==="subject"){
-  b+=`<button class="card" style="display:flex;justify-content:space-between;align-items:center;width:100%;padding:14px 16px" data-a="picks">
-   <span style="font-weight:600">${esc(s.name)}</span><span class="muted">${s.scope==="week"?"weekdagen":s.scope==="all"?"elke dag":"vrij"}</span></button>`;
-  b+=`<div>${D.people.map((p,i)=>`<button class="chip ${U.brush===i?"on":""}" style="${U.brush===i?`background:${P[i%6]};color:#fff;`:""}" data-a="br" data-v="${i}">${esc(p)}</button>`).join("")}
-   <button class="chip ${U.brush===-1?"on":""}" style="${U.brush===-1?"background:#16181D;color:#fff":""}" data-a="br" data-v="-1">Wissen</button></div>`;
-  b+=`<div class="hint">${U.brush===null?"Kies iemand, of tik meteen een dag":U.brush===-1?"Tik dagen om te wissen":"Tik dagen voor "+esc(D.people[U.brush])}</div>`;
- }else{
-  b+=`<div>${D.people.map((p,i)=>`<button class="chip ${U.brush===i?"on":""}" style="${U.brush===i?`background:${P[i%6]};color:#fff;`:""}" data-a="br" data-v="${i}">${esc(p)}</button>`).join("")}</div>
-  <div class="hint">Alles van ${esc(D.people[U.brush]||"")} - alleen bekijken</div>`;
- }
- return b+calGrid(s);
-}
-
-function calGrid(s){
- const{y,m}=U.mo,lead=(new Date(y,m,1).getDay()+6)%7,dim=new Date(y,m+1,0).getDate();
- let b=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
- <button data-a="mv" data-v="-1" style="padding:6px 14px">&lsaquo;</button>
- <span style="font-weight:600">${MN[m]} ${y}</span>
- <button data-a="mv" data-v="1" style="padding:6px 14px">&rsaquo;</button></div>
- <div class="grid7">${DN.map(d=>`<div class="dh">${d}</div>`).join("")}`;
- for(let i=0;i<lead;i++)b+=`<div class="day pad"></div>`;
- for(let d=1;d<=dim;d++){
-  const dt=iso(new Date(y,m,d,12)),wd=(new Date(y,m,d).getDay()+6)%7;
-  if(U.pivot==="person"){
-   const b2=U.brush===null?0:U.brush;
-   const mine=D.subjects.filter(x=>(D.asg[x.id]||{})[dt]===b2);
-   b+=`<div class="day ${dt===TD?"tdy":""}" style="${mine.length?`background:${PL[b2%6]};color:${P[b2%6]};font-weight:600`:""}">${d}
-    ${mine.length?`<div style="font-size:9px;line-height:1.1">${esc(mine[0].name.slice(0,7))}${mine.length>1?"+":""}</div>`:""}</div>`;
-   continue}
-  const p=(D.asg[s.id]||{})[dt];
-  const need=s.scope==="week"?wd<5:s.scope==="all";
-  const other=D.subjects.some(x=>x.id!==s.id&&(D.asg[x.id]||{})[dt]!=null)||D.lists.some(l=>l.d1===dt);
-  const clash=p!=null&&D.subjects.some(x=>x.id!==s.id&&(D.asg[x.id]||{})[dt]===p);
-  const gap=p==null&&need&&dt>=TD;
-  b+=`<button class="day ${gap?"gap":""} ${clash?"clash":""} ${dt===TD?"tdy":""}" style="${p!=null?`background:${PL[p%6]};color:${P[p%6]};font-weight:600`:""}" data-a="pt" data-v="${dt}">${d}${other?`<div class="dot"></div>`:""}</button>`;
- }
- b+=`</div>`;
- if(U.pivot==="subject"){const n=countGaps(s,y,m);
-  b+=`<div style="margin-top:14px;display:flex;justify-content:space-between;font-size:14px">
-  <span style="color:${n?"#A33A28":"#7A7B80"}">${n?n+" open":"alles ingevuld"}</span>
-  <span class="muted">stip = iets anders</span></div>`}
- return b+`</div>`;
-}
-
-function settings(){
- return `<div style="padding:16px 0"><h1 style="font-size:22px">Meer</h1></div>
- <div class="card"><h2>Wie plant er mee</h2>
- ${D.people.map((p,i)=>`<div class="row"><span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${P[i%6]};margin-right:9px"></span>${esc(p)}</span>
-  <button class="muted" data-a="rmp2" data-v="${i}">verwijderen</button></div>`).join("")||`<div class="muted">Niemand</div>`}
- <div style="height:12px"></div><input type="text" id="nm" placeholder="Naam toevoegen" autocomplete="off">
- <button class="btn soft" data-a="addp2">Toevoegen</button></div>
- <div class="card"><h2>Wat gepland wordt</h2>
- ${D.subjects.map(s=>`<div class="row"><span>${esc(s.name)}</span>
-  <span><span class="muted">${s.scope==="week"?"weekdagen":s.scope==="all"?"elke dag":"vrij"}</span>
-  <button class="muted" data-a="rms" data-v="${s.id}" style="margin-left:12px">verwijderen</button></span></div>`).join("")||`<div class="muted">Nog niets</div>`}
- </div>
- <div class="card"><h2>Melding</h2>
- <input type="time" id="tm2" value="${D.nudge}"><button class="btn soft" data-a="svt">Bewaren</button>
- <p class="muted" style="margin-top:10px">Meldingen werken nog niet.</p></div>
- <div class="card"><h2>Gegevens</h2>
- <button class="btn soft" data-a="exp">Exporteren</button>
- <button class="btn soft" data-a="imp">Importeren</button>
- <input type="file" id="fi" accept=".json" style="display:none">
- <p class="muted" style="margin-top:10px">Zo deel of back-up je alles.</p></div>
- <button class="btn ghost" data-a="wipe">Alles wissen</button>`;
-}
-
-function sheet(){
- const when=()=>`<div style="margin-top:14px"><h2>Wanneer</h2>
-  <div class="seg"><button data-a="md" data-v="none" class="${U.md==="none"?"on":""}">Geen</button>
-  <butt
+<script src="data.js"></script>
+<script src="views1.js"></script>
+<script src="views2.js"></script>
+<script src="actions.js"></script>
+</body>
+</html>
