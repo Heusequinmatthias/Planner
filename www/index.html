@@ -675,11 +675,35 @@ var KEY="plant_v2";
 /* ============ platform ============ */
 function native(){return !!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())}
 var mem=null;
+/* The app saves synchronously, so localStorage stays the working copy and the
+   native store is a mirror written in the background. If Android ever clears
+   the WebView's storage, boot restores from the mirror. */
+function plug(n){return (window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins[n])||null}
+
 var store={
- save:function(d){try{localStorage.setItem(KEY,JSON.stringify(d))}catch(e){mem=JSON.stringify(d)}},
+ save:function(d){
+  var j=JSON.stringify(d);
+  try{localStorage.setItem(KEY,j)}catch(e){mem=j}
+  var PR=plug("Preferences");
+  if(PR)try{PR.set({key:KEY,value:j})}catch(e){}
+ },
  load:function(){try{var v=localStorage.getItem(KEY);if(v)return JSON.parse(v)}catch(e){}
   try{return mem?JSON.parse(mem):null}catch(e){return null}},
- wipe:function(){try{localStorage.removeItem(KEY)}catch(e){}mem=null}
+ wipe:function(){
+  try{localStorage.removeItem(KEY)}catch(e){}
+  mem=null;
+  var PR=plug("Preferences");
+  if(PR)try{PR.remove({key:KEY})}catch(e){}
+ },
+ /* only used at boot, and only when the fast store came back empty */
+ restore:function(){
+  var PR=plug("Preferences");
+  if(!PR)return Promise.resolve(null);
+  return PR.get({key:KEY}).then(function(r){
+   if(!r||!r.value)return null;
+   try{return JSON.parse(r.value)}catch(e){return null}
+  }).catch(function(){return null});
+ }
 };
 var cal={
  available:function(){return native()},
@@ -692,15 +716,33 @@ var cal={
 /* ============ helpers ============ */
 /* delivery layer. browser logs; the phone build swaps in the plugin. */
 var notify={
+ available:function(){return !!plug("LocalNotifications")},
  permission:function(){
-  /* NATIVE: LocalNotifications.requestPermissions().then(r=>r.display==="granted") */
-  return Promise.resolve(false)},
+  var L=plug("LocalNotifications");
+  if(!L)return Promise.resolve(false);
+  return L.requestPermissions()
+   .then(function(r){return r&&r.display==="granted"})
+   .catch(function(){return false});
+ },
  at:function(whenISO,title,body){
-  /* NATIVE: LocalNotifications.schedule({notifications:[{id,title,body,schedule:{at:new Date(whenISO)}}]}) */
-  console.log("[notify]",whenISO,"|",title,"|",body);return Promise.resolve()},
+  var L=plug("LocalNotifications");
+  if(!L){console.log("[notify]",whenISO,"|",title,"|",body);return Promise.resolve()}
+  var when=new Date(whenISO);
+  if(when.getTime()<Date.now()+5000)return Promise.resolve();   /* never fire in the past */
+  /* one stable id per calendar day, so re-scheduling replaces rather than stacks */
+  var id=parseInt(whenISO.slice(0,10).replace(/-/g,"").slice(2),10);
+  return L.schedule({notifications:[{
+   id:id,title:title,body:body||"",schedule:{at:when,allowWhileIdle:true},
+   smallIcon:"ic_stat_icon_config_sample"
+  }]}).catch(function(e){console.log("notify failed",e);});
+ },
  cancel:function(){
-  /* NATIVE: LocalNotifications.getPending().then(p=>LocalNotifications.cancel(p)) */
-  return Promise.resolve()}
+  var L=plug("LocalNotifications");
+  if(!L)return Promise.resolve();
+  return L.getPending().then(function(p){
+   if(p&&p.notifications&&p.notifications.length)return L.cancel({notifications:p.notifications});
+  }).catch(function(){});
+ }
 };
 
 var today=new Date();today.setHours(12,0,0,0);
@@ -780,7 +822,7 @@ function undoLast(){
 
 var D=store.load()||fresh();
 /* migration: bring older saves up to the current shape rather than breaking */
-(function(){
+function migrate(){
  var f=fresh();
  for(var k in f)if(D[k]===undefined)D[k]=f[k];
  for(var i=0;i<D.lists.length;i++){
@@ -788,8 +830,9 @@ var D=store.load()||fresh();
   if(!l.kind)l.kind=l.evId?"event":(l.icon==="bag"?"shop":"todo");
  }
  if(!D.weeks.length)D.weeks=[];
- D.v=3;
-})();
+ D.v=4;
+}
+migrate();
 var U={tab:"home",sheet:null,filt:null,cur:null,brush:null,person:null,plan:null,
  md:"none",d1:"",d2:"",tt:"",cat:null,who:null,icon:0,mklist:false,mv:null,qty:"",rem:null,
  esub:null,rname:"",rscope:"week",rdays:[0,2,4],rwho:null,rroll:false,rneed:1,biz:false,
@@ -3578,7 +3621,16 @@ function icsForTask(t){
  return out.join("\r\n");
 }
 
+/* Browser: a download. Phone: write the file, then hand it to the share sheet,
+   which is what finally lets an .ics reach someone by email. */
 function download(name,text,mime){
+ var F=plug("Filesystem"),S=plug("Share");
+ if(F&&S){
+  F.writeFile({path:name,data:text,directory:"CACHE",encoding:"utf8"})
+   .then(function(w){return S.share({title:name,url:w.uri})})
+   .catch(function(e){console.log("share file failed",e)});
+  return;
+ }
  var b=new Blob([text],{type:mime||"text/plain"});
  var u=URL.createObjectURL(b),a=document.createElement("a");
  a.href=u;a.download=name;a.click();
@@ -3625,7 +3677,8 @@ function handoverText(sid,dt){
 }
 
 function shareOrCopy(text,fname){
- /* NATIVE: Share.share({text}) via the Capacitor share plugin */
+ var S=plug("Share");
+ if(S){try{S.share({text:text});return "shared"}catch(e){}}
  if(navigator.share){try{navigator.share({text:text});return "shared"}catch(e){}}
  if(navigator.clipboard&&navigator.clipboard.writeText){
   try{navigator.clipboard.writeText(text);return "copied"}catch(e){}
@@ -3657,6 +3710,10 @@ try{
  if(D.step>=2)loadCals();
  r();
  if(D.step>=99)scheduleWeek();
+ /* nothing saved here, but the phone may still have it */
+ if(D.step===0&&store.restore)store.restore().then(function(saved){
+  if(saved&&saved.step){D=saved;migrate();r();if(D.step>=99)scheduleWeek()}
+ });
 }catch(err){
  el.innerHTML='<div style="padding:18px;color:#b00;font:13px/1.5 monospace;white-space:pre-wrap">'+
   'PlanT could not start\n\n'+(err&&err.message?err.message:err)+
