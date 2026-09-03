@@ -717,29 +717,40 @@ var cal={
  plugin:function(){return plug("CapacitorCalendar")},
  available:function(){return !!cal.plugin()},
 
+ /* every failure here gets recorded so the screen can say what went wrong,
+    rather than showing an empty list and leaving you guessing */
+ state:"",
  permission:function(){
   var C=cal.plugin();
-  if(!C)return Promise.resolve(false);
+  if(!C){cal.state="no plugin";return Promise.resolve(false)}
   return C.requestAllPermissions()
    .then(function(r){
-    var v=r&&r.result;
-    return !!(v&&(v.writeCalendar==="granted"||v.readCalendar==="granted"));
+    var v=(r&&r.result)||{};
+    cal.state="permissions: "+JSON.stringify(v);
+    for(var k in v)if(String(v[k])==="granted")return true;
+    return false;
    })
-   .catch(function(){return false});
+   .catch(function(e){cal.state="permission error: "+(e&&e.message||e);return false});
  },
 
  list:function(){
   var C=cal.plugin();
-  if(!C)return Promise.resolve([{id:"c1",name:"Family (shared)"},{id:"c2",name:"Personal"}]);
+  if(!C){cal.state="running in a browser, so these are made up";
+   return Promise.resolve([{id:"c1",name:"Family (shared)"},{id:"c2",name:"Personal"}])}
   return cal.permission().then(function(ok){
-   if(!ok)return [];
+   if(!ok){if(cal.state.indexOf("error")<0)cal.state="calendar access refused";return []}
    return C.listCalendars().then(function(r){
-    var out=[],src=(r&&r.result)||[];
-    for(var i=0;i<src.length;i++)
-     out.push({id:String(src[i].id),name:src[i].title||src[i].name||"Calendar"});
+    var src=(r&&r.result)||r||[];
+    if(!src.length){cal.state="access granted, but the phone reported no calendars";return []}
+    var out=[];
+    for(var i=0;i<src.length;i++){
+     var c=src[i];
+     out.push({id:String(c.id),name:c.title||c.name||c.displayName||("Calendar "+c.id)});
+    }
+    cal.state="found "+out.length;
     return out;
-   });
-  }).catch(function(){return []});
+   }).catch(function(e){cal.state="listCalendars failed: "+(e&&e.message||e);return []});
+  }).catch(function(e){cal.state="failed: "+(e&&e.message||e);return []});
  },
 
  /* returns the new event id, or null */
@@ -1493,6 +1504,11 @@ function setup(){
      ico("cal","s")+esc(U.cals[i].name)+'</span>'+
      (D.writeCal===U.cals[i].id?'<span style="color:var(--leaf)">'+ico("check","s")+'</span>':'<span class="t-xs">pick</span>')+'</button>';
   if(!U.cals.length)b+='<div class="t-s">No calendars found.</div>';
+  b+='<div style="height:8px"></div>'+
+   '<button class="btn soft" data-a="recals">Look again</button>'+
+   (cal.state?'<p class="t-xs" style="margin-top:6px;word-break:break-word">'+esc(cal.state)+'</p>':"")+
+   '<p class="t-xs" style="margin-top:6px">A calendar only appears here if it is switched on '+
+   'for this phone in the Google Calendar app.</p>';
   b+='</div>';
   if(!cal.available())b+='<p class="t-xs">Web version: the calendar is simulated.</p>';
   b+='<button class="btn" data-a="s3">Continue</button>';
@@ -2099,6 +2115,26 @@ function more(){
    (wk[i].m.body?'<div class="t-xs">'+esc(wk[i].m.body)+'</div>':"")+'</span>'+
    '<span class="t-xs" style="white-space:nowrap">'+(wk[i].d===TD?"today":dayName(wk[i].d))+'</span></div>';
  b+='<p class="t-xs" style="margin-top:10px">'+wk.length+' of the next 7 days &middot; delivery needs the installed app</p></div>';
+
+ /* --- the shared calendar --- */
+ b+='<div class="card vine"><span class="vn"></span>'+
+  '<div class="row" style="border:none;padding:0 0 6px">'+
+  '<span class="t-eyebrow">Shared calendar</span>'+
+  '<span class="t-xs">'+(D.writeCal?"on":"off")+'</span></div>'+
+  '<p class="t-xs" style="margin-bottom:10px">PlanT writes its rota here as you paint, '+
+  'so whoever shares this calendar sees it without either of you sending anything.</p>';
+ for(var i=0;i<U.cals.length;i++)
+  b+='<button class="row" data-a="wc" data-v="'+esc(U.cals[i].id)+'"><span class="rowl">'+
+   ico("cal","s")+esc(U.cals[i].name)+'</span>'+
+   (D.writeCal===U.cals[i].id
+     ?'<span style="color:var(--leaf)">'+ico("check","s")+'</span>'
+     :'<span class="t-xs">pick</span>')+'</button>';
+ if(!U.cals.length)b+='<div class="t-s" style="padding:4px 0">No calendars found.</div>';
+ b+='<div style="height:8px"></div><button class="btn soft" data-a="recals">Look again</button>';
+ if(D.writeCal)b+='<button class="btn ghost" data-a="wcoff">Stop writing to it</button>';
+ if(cal.state)b+='<p class="t-xs" style="margin-top:6px;word-break:break-word">'+esc(cal.state)+'</p>';
+ b+='<p class="t-xs" style="margin-top:6px">A calendar only shows up here if it is switched on '+
+  'for this phone in the Google Calendar app.</p></div>';
 
  /* --- AI, off unless a key is present --- */
  b+='<div class="card vine"><span class="vn"></span>'+
@@ -3117,6 +3153,7 @@ function act(a,v,n){
  /* nav */
  if(a==="t"){
   U.undoBar=null;
+  if(v==="set"&&!U.cals.length&&cal.available())loadCals();
   U.tab=v;U.plan=null;U.sheet=null;U.stk=[];U.evOpen=null;
   if(v==="lists"){var l0=listsOf(U.sub==="shop"?"shop":"todo");
    if(!l0.length)l0=[ensureList(U.sub==="shop"?"shop":"todo")];
@@ -3342,6 +3379,8 @@ function act(a,v,n){
   var ix=D.ext.indexOf(+v);
   if(ix<0)D.ext.push(+v);else D.ext.splice(ix,1);
  }
+ if(a==="recals"){cal.state="looking...";loadCals()}
+ if(a==="wcoff"){D.writeCal=null;U.toast="PlanT will stop writing to your calendar"}
  if(a==="exp")doExport();
  if(a==="share")U.sheet="share";
  if(a==="sched"||a==="schedp"){
