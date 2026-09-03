@@ -1,5 +1,8 @@
 {
-  "appId": "be.planner.household",
-  "appName": "Planner",
-  "webDir": "www"
+  "appId": "be.plant.household",
+  "appName": "PlanT",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
 }
