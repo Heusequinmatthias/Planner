@@ -757,8 +757,12 @@ var cal={
  write:function(c,t,d){
   var C=cal.plugin();
   if(!C||!c){console.log("cal write",c,t,d);return Promise.resolve(null)}
-  var start=new Date(d+"T00:00:00").getTime();
-  var end=new Date(addDays(d,1)+"T00:00:00").getTime();
+  /* An all-day event is stored at UTC midnight. Using local midnight puts
+     Belgium an hour or two behind UTC, which lands the entry on the day
+     before - so build the timestamp in UTC explicitly. */
+  var a=d.split("-"), b=addDays(d,1).split("-");
+  var start=Date.UTC(+a[0],+a[1]-1,+a[2]);
+  var end=Date.UTC(+b[0],+b[1]-1,+b[2]);
   return C.createEvent({
    calendarId:String(c),title:t,
    startDate:start,endDate:end,isAllDay:true,
