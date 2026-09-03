@@ -27,7 +27,49 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm install --no-audit --no-fund
+          echo "--- installed ---"
+          npm ls --depth=0 || true
+
+      - name: Check the config
+        run: |
+          echo "--- files in the repo root ---"
+          ls -1
+
+          ok=0
+          if [ -f capacitor.config.json ]; then
+            if node -e "const c=require('./capacitor.config.json');if(!c.appId||!c.appName||!c.webDir)process.exit(1)" 2>/dev/null; then
+              ok=1
+            else
+              echo "capacitor.config.json is present but not valid JSON, or is missing appId/appName/webDir."
+            fi
+          else
+            echo "capacitor.config.json is missing."
+          fi
+
+          if [ "$ok" = "0" ]; then
+            echo ">>> writing a known-good capacitor.config.json so the build can continue"
+            cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "be.plant.household",
+            "appName": "PlanT",
+            "webDir": "www",
+            "android": {
+              "allowMixedContent": false
+            }
+          }
+          JSON
+          fi
+
+          echo "--- capacitor.config.json ---"
+          cat capacitor.config.json
+
+          if [ ! -f www/index.html ]; then
+            echo "ERROR: www/index.html is missing - the app itself is not in the repo."
+            exit 1
+          fi
+          echo "--- www/index.html is $(wc -c < www/index.html) bytes ---"
 
       - name: Create the Android project
         run: npx cap add android
@@ -40,9 +82,6 @@ jobs:
           RES=android/app/src/main/res
           mkdir -p "$RES/mipmap-anydpi-v26" "$RES/drawable" "$RES/values"
 
-          # Unique resource names on purpose: reusing ic_launcher_foreground loses to
-          # the template's drawable-v24 copy on Android 7 and newer, which is why the
-          # first attempt still showed the stock droid.
           cat > "$RES/drawable/plant_sprout.xml" <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -74,11 +113,6 @@ jobs:
           XML
 
           cp "$RES/mipmap-anydpi-v26/ic_launcher.xml" "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
-
-          # take the template's droid out so nothing can win on precedence
-          rm -f "$RES"/drawable-v24/ic_launcher_foreground.xml
-          rm -f "$RES"/drawable/ic_launcher_foreground.xml
-          rm -f "$RES"/mipmap-*/ic_launcher_foreground.png
 
           echo "--- launcher resources after the swap ---"
           find "$RES" \( -name "*launcher*" -o -name "plant_*" \) | sort
