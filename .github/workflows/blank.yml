@@ -40,7 +40,10 @@ jobs:
           RES=android/app/src/main/res
           mkdir -p "$RES/mipmap-anydpi-v26" "$RES/drawable" "$RES/values"
 
-          cat > "$RES/drawable/ic_launcher_foreground.xml" <<'XML'
+          # Unique resource names on purpose: reusing ic_launcher_foreground loses to
+          # the template's drawable-v24 copy on Android 7 and newer, which is why the
+          # first attempt still showed the stock droid.
+          cat > "$RES/drawable/plant_sprout.xml" <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="108dp" android:height="108dp"
@@ -55,25 +58,32 @@ jobs:
           </vector>
           XML
 
-          cat > "$RES/values/ic_launcher_background.xml" <<'XML'
+          cat > "$RES/values/plant_colors.xml" <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-            <color name="ic_launcher_background">#1F4E39</color>
+            <color name="plant_green">#1F4E39</color>
           </resources>
           XML
 
           cat > "$RES/mipmap-anydpi-v26/ic_launcher.xml" <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-            <background android:drawable="@color/ic_launcher_background"/>
-            <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+            <background android:drawable="@color/plant_green"/>
+            <foreground android:drawable="@drawable/plant_sprout"/>
           </adaptive-icon>
           XML
 
           cp "$RES/mipmap-anydpi-v26/ic_launcher.xml" "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
-          # the stock PNGs stay as the fallback for Android 7 and older
-          echo "icon files written:"
-          ls "$RES/mipmap-anydpi-v26" "$RES/drawable" | sed 's/^/  /'
+
+          # take the template's droid out so nothing can win on precedence
+          rm -f "$RES"/drawable-v24/ic_launcher_foreground.xml
+          rm -f "$RES"/drawable/ic_launcher_foreground.xml
+          rm -f "$RES"/mipmap-*/ic_launcher_foreground.png
+
+          echo "--- launcher resources after the swap ---"
+          find "$RES" \( -name "*launcher*" -o -name "plant_*" \) | sort
+          echo "--- what the adaptive icon points at ---"
+          cat "$RES/mipmap-anydpi-v26/ic_launcher.xml"
 
       - name: Build the APK
         run: |
