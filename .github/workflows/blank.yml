@@ -71,17 +71,43 @@ jobs:
           fi
           echo "--- www/index.html is $(wc -c < www/index.html) bytes ---"
 
+
       - name: Create the Android project
         run: npx cap add android
 
       - name: Copy the web files in
         run: npx cap sync android
 
+      - name: Add the calendar permissions
+        run: |
+          MAN=android/app/src/main/AndroidManifest.xml
+
+          # The calendar plugin does not declare these itself, and the android/ folder is
+          # rebuilt from scratch on every run, so they get added here each time.
+          if grep -q "READ_CALENDAR" "$MAN"; then
+            echo "calendar permissions already present"
+          else
+            sed -i 's#</manifest>#    <uses-permission android:name="android.permission.READ_CALENDAR" />\n    <uses-permission android:name="android.permission.WRITE_CALENDAR" />\n</manifest>#' "$MAN"
+            echo "added READ_CALENDAR and WRITE_CALENDAR"
+          fi
+
+          if ! grep -q "READ_CALENDAR" "$MAN"; then
+            echo "ERROR: could not add the calendar permissions"
+            cat "$MAN"
+            exit 1
+          fi
+
+          echo "--- permissions the app declares ---"
+          grep -o "android.permission.[A-Z_]*" "$MAN" | sort -u | sed "s/^/  /"
+
       - name: Put the PlanT icon in
         run: |
           RES=android/app/src/main/res
           mkdir -p "$RES/mipmap-anydpi-v26" "$RES/drawable" "$RES/values"
 
+          # Unique resource names on purpose: reusing ic_launcher_foreground loses to
+          # the template's drawable-v24 copy on Android 7 and newer, which is why the
+          # first attempt still showed the stock droid.
           cat > "$RES/drawable/plant_sprout.xml" <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -113,6 +139,10 @@ jobs:
           XML
 
           cp "$RES/mipmap-anydpi-v26/ic_launcher.xml" "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
+
+          # Nothing is deleted. The names above are unique, so the template's
+          # own droid resources can stay - deleting them risks a dangling
+          # reference from some other file, which fails the whole build.
 
           echo "--- launcher resources after the swap ---"
           find "$RES" \( -name "*launcher*" -o -name "plant_*" \) | sort
