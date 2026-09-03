@@ -7,33 +7,83 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm install
 
-      - run: npx cap add android
+      - name: Create the Android project
+        run: npx cap add android
 
-      - run: npx cap sync android
+      - name: Copy the web files in
+        run: npx cap sync android
 
-      - run: |
+      - name: Put the PlanT icon in
+        run: |
+          RES=android/app/src/main/res
+          mkdir -p "$RES/mipmap-anydpi-v26" "$RES/drawable" "$RES/values"
+
+          cat > "$RES/drawable/ic_launcher_foreground.xml" <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+            <group android:translateX="54" android:translateY="37"
+                   android:scaleX="1.05" android:scaleY="1.05">
+              <path android:fillColor="#F0F5EE" android:pathData="M-2.2,1 C-2.2,14 -1.4,24 -1.2,34 L1.2,34 C1.4,24 2.2,14 2.2,1 Z"/>
+              <path android:fillColor="#F0F5EE" android:pathData="M0,2 C-4,-1 -9,-2.2 -14.5,-1.2 C-19,-0.4 -21.5,1.6 -22,3.2 C-16,5.8 -8,5.2 -3.2,3.4 C-1.8,2.9 -0.6,2.4 0,2 Z"/>
+              <path android:fillColor="#F0F5EE" android:pathData="M0,2 C4,-1 9,-2.2 14.5,-1.2 C19,-0.4 21.5,1.6 22,3.2 C16,5.8 8,5.2 3.2,3.4 C1.8,2.9 0.6,2.4 0,2 Z"/>
+              <path android:fillColor="#F0F5EE" android:pathData="M-1.7,0.4 a1.7,1.7 0 1,0 3.4,0 a1.7,1.7 0 1,0 -3.4,0 Z"/>
+            </group>
+          </vector>
+          XML
+
+          cat > "$RES/values/ic_launcher_background.xml" <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+            <color name="ic_launcher_background">#1F4E39</color>
+          </resources>
+          XML
+
+          cat > "$RES/mipmap-anydpi-v26/ic_launcher.xml" <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+            <background android:drawable="@color/ic_launcher_background"/>
+            <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+          </adaptive-icon>
+          XML
+
+          cp "$RES/mipmap-anydpi-v26/ic_launcher.xml" "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
+          # the stock PNGs stay as the fallback for Android 7 and older
+          echo "icon files written:"
+          ls "$RES/mipmap-anydpi-v26" "$RES/drawable" | sed 's/^/  /'
+
+      - name: Build the APK
+        run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
         with:
-          name: planner-apk
+          name: plant-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          
+          if-no-files-found: error
