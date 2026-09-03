@@ -705,11 +705,63 @@ var store={
   }).catch(function(){return null});
  }
 };
+/* ------------------------------------------------------------
+   THE SHARED CALENDAR
+   PlanT writes its own rota entries straight in, so the other
+   person sees a change without anybody pressing publish. Every
+   entry it creates is remembered by id on the assignment, which
+   is the only way to take it out again later - calendars delete
+   by id, never by title.
+   ------------------------------------------------------------ */
 var cal={
- available:function(){return native()},
- list:function(){return Promise.resolve([{id:"c1",name:"Family (shared)"},{id:"c2",name:"Personal"},{id:"c3",name:"Holidays"}])},
- write:function(c,t,d){console.log("cal write",c,t,d);return Promise.resolve()},
- remove:function(c,t,d){console.log("cal remove",c,t,d);return Promise.resolve()},
+ plugin:function(){return plug("CapacitorCalendar")},
+ available:function(){return !!cal.plugin()},
+
+ permission:function(){
+  var C=cal.plugin();
+  if(!C)return Promise.resolve(false);
+  return C.requestAllPermissions()
+   .then(function(r){
+    var v=r&&r.result;
+    return !!(v&&(v.writeCalendar==="granted"||v.readCalendar==="granted"));
+   })
+   .catch(function(){return false});
+ },
+
+ list:function(){
+  var C=cal.plugin();
+  if(!C)return Promise.resolve([{id:"c1",name:"Family (shared)"},{id:"c2",name:"Personal"}]);
+  return cal.permission().then(function(ok){
+   if(!ok)return [];
+   return C.listCalendars().then(function(r){
+    var out=[],src=(r&&r.result)||[];
+    for(var i=0;i<src.length;i++)
+     out.push({id:String(src[i].id),name:src[i].title||src[i].name||"Calendar"});
+    return out;
+   });
+  }).catch(function(){return []});
+ },
+
+ /* returns the new event id, or null */
+ write:function(c,t,d){
+  var C=cal.plugin();
+  if(!C||!c){console.log("cal write",c,t,d);return Promise.resolve(null)}
+  var start=new Date(d+"T00:00:00").getTime();
+  var end=new Date(addDays(d,1)+"T00:00:00").getTime();
+  return C.createEvent({
+   calendarId:String(c),title:t,
+   startDate:start,endDate:end,isAllDay:true,
+   availability:"free"
+  }).then(function(r){return (r&&r.id)?String(r.id):null})
+    .catch(function(e){console.log("cal write failed",e);return null});
+ },
+
+ removeById:function(id){
+  var C=cal.plugin();
+  if(!C||!id)return Promise.resolve();
+  return C.deleteEventsById({ids:[String(id)]}).catch(function(e){console.log("cal remove failed",e)});
+ },
+
  fmtTitle:function(s,p){return s+" - "+p}
 };
 
@@ -728,7 +780,7 @@ var notify={
   var L=plug("LocalNotifications");
   if(!L){console.log("[notify]",whenISO,"|",title,"|",body);return Promise.resolve()}
   var when=new Date(whenISO);
-  if(when.getTime()<Date.now()+5000)return Promise.resolve();   /* never fire in the past */
+  if(when.getTime()<Date.now()+2000)return Promise.resolve();   /* never fire in the past */
   /* one stable id per calendar day, so re-scheduling replaces rather than stacks */
   var id=parseInt(whenISO.slice(0,10).replace(/-/g,"").slice(2),10);
   return L.schedule({notifications:[{
@@ -813,10 +865,28 @@ var UNDO=[];
 function snapshot(label){
  try{UNDO.push({label:label,json:JSON.stringify(D)});if(UNDO.length>6)UNDO.shift()}catch(e){}
 }
+/* Writing is automatic, so undoing has to reach the calendar as well.
+   Anything the newer state had written that the older state does not
+   contain gets removed. Entries we cannot match are left alone rather
+   than guessed at - a stray entry beats deleting someone else's. */
+function reconcileCal(newer,older){
+ if(!cal.available()||!D.writeCal)return;
+ for(var sid in newer){
+  var n=newer[sid]||{},o=older[sid]||{};
+  for(var dt in n){
+   var was=n[dt],now=o[dt];
+   if(!was||!was.ev)continue;
+   for(var p in was.ev)
+    if(!(now&&now.ps&&now.ps.indexOf(+p)>=0))cal.removeById(was.ev[p]);
+  }
+ }
+}
 function undoLast(){
  var u=UNDO.pop();
  if(!u)return false;
+ var newer=JSON.parse(JSON.stringify(D.asg||{}));
  try{D=JSON.parse(u.json)}catch(e){return false}
+ reconcileCal(newer,D.asg||{});
  return true;
 }
 
@@ -839,7 +909,7 @@ var U={tab:"home",sheet:null,filt:null,cur:null,brush:null,person:null,plan:null
  tm:"",note:"",rep:null,q:"",
  just:null,justAdd:null,moDir:0,freshPanel:false,mode:"view",stk:[],evSel:null,evOpen:null,
  sub:"todo",hv:"day",week:null,groveKey:null,groveYear:null,undoBar:null,q:"",toast:null,wsub:null,
- aiBusy:false,aiErr:null,aiPreview:null,aiRaw:"",cTitle:"",cBody:"",cIcs:null,cFile:null,
+ aiBusy:false,aiErr:null,aiPreview:null,aiRaw:"",cTitle:"",cBody:"",cIcs:null,cFile:null,notifOK:null,
  mo:{y:today.getFullYear(),m:today.getMonth()},
  sel:null,pend:"",editl:null,pd:null,cals:[],act:null,focus:0,painted:false,mealDay:null};
 if(D.subjects.length&&U.cur===null)U.cur=D.subjects[0].id;
@@ -2008,6 +2078,12 @@ function more(){
   '<div class="t-eyebrow" style="margin-bottom:8px">Reminder</div>'+
   '<input type="time" id="tm2" value="'+D.nudge+'">'+
   '<button class="btn soft" data-a="svt">Save</button>'+
+  (notify.available&&notify.available()
+    ?'<button class="btn soft" data-a="ntest">Send a test in 15 seconds</button>'+
+     '<p class="t-xs" style="margin-top:6px">Permission: '+
+     (U.notifOK==="yes"?"granted":U.notifOK==="no"?"refused &mdash; turn it on in Android settings":"not asked yet")+
+     '</p>'
+    :"")+
   '<div class="t-eyebrow" style="margin:18px 0 6px">How far ahead</div>'+
   '<p class="t-xs" style="margin-bottom:8px">How early gaps and events show up.</p><div>';
  var opts=[2,3,5,7];
@@ -2855,19 +2931,32 @@ function assign(s,dt,p){
  if(!D.asg[s.id])D.asg[s.id]={};
  var cur=asgAt(s,dt);
  var list=cur?cur.ps.slice():[];
+ var prevIds=(D.asg[s.id][dt]&&D.asg[s.id][dt].ev)||{};
  var ix=list.indexOf(p);
  if((s.need||1)>1){
   if(ix>=0)list.splice(ix,1);else list.push(p);
  }else{
   list=(ix>=0&&list.length===1)?[]:[p];
  }
- if(list.length)D.asg[s.id][dt]={ps:list,by:D.me,at:Date.now()};
+ /* ids of entries we wrote, keyed by person, so we can take the right one out */
+ var ids={};
+ for(var k in prevIds)if(list.indexOf(+k)>=0)ids[k]=prevIds[k];
+
+ if(list.length)D.asg[s.id][dt]={ps:list,ev:ids,by:D.me,at:Date.now()};
  else if(s.roll&&s.pat&&s.patFrom&&dt>=s.patFrom&&s.pat[wdOf(dt)]!==undefined)
   D.asg[s.id][dt]={x:1};
  else delete D.asg[s.id][dt];
+
  if(cal.available()&&D.writeCal){
-  if(ix>=0)cal.remove(D.writeCal,cal.fmtTitle(s.name,pname(p)),dt);
-  else cal.write(D.writeCal,cal.fmtTitle(s.name,pname(p)),dt);
+  /* anyone dropped from the day loses their calendar entry */
+  for(var k in prevIds)if(list.indexOf(+k)<0)cal.removeById(prevIds[k]);
+  /* anyone newly on it gains one */
+  if(list.indexOf(p)>=0&&!ids[p]){
+   var slot=D.asg[s.id][dt];
+   cal.write(D.writeCal,cal.fmtTitle(s.name,pname(p)),dt).then(function(id){
+    if(id&&slot&&slot.ps){if(!slot.ev)slot.ev={};slot.ev[p]=id;save()}
+   });
+  }
  }
 }
 function unassign(sid,dt,who){
@@ -2877,10 +2966,12 @@ function unassign(sid,dt,who){
  if(!D.asg[sid])D.asg[sid]={};
  if(who!=null){assign(s2,dt,who);return}   /* remove just that person */
  var prev=D.asg[sid][dt];
+ if(prev&&prev.ev&&cal.available()&&D.writeCal)
+  for(var k in prev.ev)cal.removeById(prev.ev[k]);
  if(s2.roll&&s2.pat&&s2.patFrom&&dt>=s2.patFrom&&s2.pat[wdOf(dt)]!==undefined)
   D.asg[sid][dt]={x:1};                    /* just this date, pattern survives */
  else delete D.asg[sid][dt];
- if(prev&&!prev.x&&D.writeCal)cal.remove(sid,dt);
+ /* its entries were already removed by id above */
 }
 
 
@@ -2938,7 +3029,12 @@ function act(a,v,n){
  if(a==="s2")D.step=2;
  if(a==="lead"){D.nudge=val("#tm")||D.nudge;D.lead=+v}
  if(a==="s2cal"){D.nudge=val("#tm")||D.nudge;D.step=3;loadCals()}
- if(a==="wc")D.writeCal=v;
+ if(a==="wc"){
+  D.writeCal=v||null;
+  if(D.writeCal&&cal.available())cal.permission().then(function(ok){
+   if(!ok){D.writeCal=null;U.toast="Android refused calendar access";save();r()}
+  });
+ }
  if(a==="s3"){D.step=4;U.focus=1}
  if(a==="skip"){D.step=99;U.tab="home"}
  if(a==="pre"){var x=el.querySelector("#sj");if(x)x.value=v;return}
@@ -3230,6 +3326,16 @@ function act(a,v,n){
  /* more */
  if(a==="svt")D.nudge=val("#tm2")||D.nudge;
  if(a==="setlead")D.lead=+v;
+ if(a==="ntest"){
+  notify.permission().then(function(g){
+   U.notifOK=g?"yes":"no";
+   if(!g){U.toast="Android refused notifications";save();r();return}
+   var when=new Date(Date.now()+15000).toISOString();
+   notify.at(when,"PlanT test","If you can see this, reminders work.");
+   U.toast="Test sent - leave the app and wait 15 seconds";
+   save();r();
+  });
+ }
  if(a==="gtype")D.gtype=v;
  if(a==="togext"){
   if(!D.ext)D.ext=[];
@@ -3709,7 +3815,12 @@ el=document.getElementById("app");
 try{
  if(D.step>=2)loadCals();
  r();
- if(D.step>=99)scheduleWeek();
+ if(D.step>=99){
+  /* Android 13+ will drop every notification silently without this */
+  if(notify.available&&notify.available()){
+   notify.permission().then(function(g){U.notifOK=g?"yes":"no";scheduleWeek();r()});
+  }else scheduleWeek();
+ }
  /* nothing saved here, but the phone may still have it */
  if(D.step===0&&store.restore)store.restore().then(function(saved){
   if(saved&&saved.step){D=saved;migrate();r();if(D.step>=99)scheduleWeek()}
