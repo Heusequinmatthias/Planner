@@ -1,8 +1,11 @@
 {
-  "name": "planner",
+  "name": "plant",
   "version": "1.0.0",
   "private": true,
-  "devDependencies": { "@capacitor/cli": "^7.0.0" },
+  "description": "PlanT household planner",
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
     "@capacitor/core": "^7.0.0"
